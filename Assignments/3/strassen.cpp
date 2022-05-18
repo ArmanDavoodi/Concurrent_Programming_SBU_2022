@@ -247,7 +247,7 @@ void run()
 
 			sigmaTime = strassenSequentialProduct(a, b, c, n, 0, 0, 0, 0, true);
 			computed = true;
-			printf("\sequential strassen for matrices of size %d took %f seconds to compute.\n", n, sigmaTime);
+			printf("\tsequential strassen for matrices of size %d took %f seconds to compute.\n", n, sigmaTime);
 			sigmaTime = 0.0;
 		}
 		else if (!query.compare(QUERY_STRASSEN_PAR))
@@ -260,7 +260,7 @@ void run()
 
 				sigmaTime = strassenParallelProduct(a, b, c, n, 0, 0, 0, 0, true);
 				computed = true;
-				printf("\parallel strassen for matrices of size %d took %f seconds to compute.\n", n, sigmaTime);
+				printf("\tparallel strassen for matrices of size %d took %f seconds to compute.\n", n, sigmaTime);
 				sigmaTime = 0.0;
 		}
 		else if (!query.compare(QUERY_STRASSEN_SEQ_N_TIMES))
@@ -284,7 +284,7 @@ void run()
 				sigmaTime += strassenSequentialProduct(a, b, c, n, 0, 0, 0, 0, true);
 			}
 
-			printf("\sequential strassen for matrices of size %d took %f seconds in average to compute.\n", n, sigmaTime / t);
+			printf("\tsequential strassen for matrices of size %d took %f seconds in average to compute.\n", n, sigmaTime / t);
 			sigmaTime = 0.0;
 		}
 		else if (!query.compare(QUERY_STRASSEN_PAR_N_TIMES))
@@ -308,7 +308,7 @@ void run()
 				sigmaTime += strassenParallelProduct(a, b, c, n, 0, 0, 0, 0, true);
 			}
 
-			printf("\parallel strassen for matrices of size %d took %f seconds in average to compute.\n", n, sigmaTime / t);
+			printf("\tparallel strassen for matrices of size %d took %f seconds in average to compute.\n", n, sigmaTime / t);
 			sigmaTime = 0.0;
 		}
 		else if (!query.compare(QUERY_CLEAR))
@@ -480,7 +480,7 @@ double strassenSequentialProduct(int** a, int** b, int**& c, int n
 				c[i][j] = 0;
 				for (int k = 0; k < n; ++k)
 				{
-					c[i][j] += a[i][k] * b[k][j];
+					c[i][j] += a[i + xa][k + ya] * b[k + xb][j + yb];
 				}
 			}
 		}
@@ -489,12 +489,16 @@ double strassenSequentialProduct(int** a, int** b, int**& c, int n
 	{
 		// strassen algorithm
 		int dividedSize = n / 2;
-		int*** s = new int** [10];
+		int ***s = new int** [10], ***p = new int** [7];
 		for (int i = 0; i < 10; ++i)
 		{
+			if (i < 7)
+				p[i] = new int* [dividedSize];
 			s[i] = new int* [dividedSize];
 			for (int j = 0; j < dividedSize; ++j)
 			{
+				if (i < 7)
+					p[i][j] = new int[dividedSize];
 				s[i][j] = new int[dividedSize];
 			}
 		}
@@ -524,30 +528,30 @@ double strassenSequentialProduct(int** a, int** b, int**& c, int n
 		sequentialSquareMatrixAddition(b, b, s[9], dividedSize, xb, yb, xb, yb + dividedSize);
 
 		// recursive calls(computing P matrices)
-		strassenSequentialProduct(a, s[0], s[0], dividedSize, xa, ya, 0, 0);
-		strassenSequentialProduct(s[1], b, s[1], dividedSize, 0, 0, xb + dividedSize, yb + dividedSize);
-		strassenSequentialProduct(s[2], b, s[2], dividedSize, 0, 0, xb, yb);
-		strassenSequentialProduct(a, s[3], s[3], dividedSize, xa + dividedSize, ya + dividedSize, 0, 0);
-		strassenSequentialProduct(s[4], s[5], s[4], dividedSize);
-		strassenSequentialProduct(s[6], s[7], s[5], dividedSize);
-		strassenSequentialProduct(s[8], s[9], s[6], dividedSize);
+		strassenSequentialProduct(a, s[0], p[0], dividedSize, xa, ya, 0, 0);
+		strassenSequentialProduct(s[1], b, p[1], dividedSize, 0, 0, xb + dividedSize, yb + dividedSize);
+		strassenSequentialProduct(s[2], b, p[2], dividedSize, 0, 0, xb, yb);
+		strassenSequentialProduct(a, s[3], p[3], dividedSize, xa + dividedSize, ya + dividedSize, 0, 0);
+		strassenSequentialProduct(s[4], s[5], p[4], dividedSize);
+		strassenSequentialProduct(s[6], s[7], p[5], dividedSize);
+		strassenSequentialProduct(s[8], s[9], p[6], dividedSize);
 
 		// computing C11
-		sequentialSquareMatrixAddition(s[4], s[3], c, dividedSize, 0, 0, 0, 0, 0, 0);
-		sequentialSquareMatrixSubtraction(c, s[1], c, dividedSize, 0, 0, 0, 0, 0, 0);
-		sequentialSquareMatrixAddition(c, s[5], c, dividedSize, 0, 0, 0, 0, 0, 0);
+		sequentialSquareMatrixAddition(p[4], p[3], c, dividedSize, 0, 0, 0, 0, 0, 0);
+		sequentialSquareMatrixSubtraction(c, p[1], c, dividedSize, 0, 0, 0, 0, 0, 0);
+		sequentialSquareMatrixAddition(c, p[5], c, dividedSize, 0, 0, 0, 0, 0, 0);
 
 		// computing C12
-		sequentialSquareMatrixAddition(s[0], s[1], c, dividedSize, 0, 0, 0, 0, 0, dividedSize);
+		sequentialSquareMatrixAddition(p[0], p[1], c, dividedSize, 0, 0, 0, 0, 0, dividedSize);
 
 		// computing C21
-		sequentialSquareMatrixAddition(s[2], s[3], c, dividedSize, 0, 0, 0, 0, dividedSize, 0);
+		sequentialSquareMatrixAddition(p[2], p[3], c, dividedSize, 0, 0, 0, 0, dividedSize, 0);
 
 		// computing C22
-		sequentialSquareMatrixAddition(s[4], s[0], c, dividedSize, 0, 0, 0, 0, dividedSize, dividedSize);
-		sequentialSquareMatrixSubtraction(c, s[2], c, dividedSize
+		sequentialSquareMatrixAddition(p[4], p[0], c, dividedSize, 0, 0, 0, 0, dividedSize, dividedSize);
+		sequentialSquareMatrixSubtraction(c, p[2], c, dividedSize
 			, dividedSize, dividedSize, 0, 0, dividedSize, dividedSize);
-		sequentialSquareMatrixSubtraction(c, s[6], c, dividedSize
+		sequentialSquareMatrixSubtraction(c, p[6], c, dividedSize
 			, dividedSize, dividedSize, 0, 0, dividedSize, dividedSize);
 
 		for (int i = 0; i < 10; ++i)
@@ -556,12 +560,24 @@ double strassenSequentialProduct(int** a, int** b, int**& c, int n
 			{
 				delete[] s[i][j];
 				s[i][j] = nullptr;
+				if (i < 7)
+				{
+					delete[] p[i][j];
+					p[i][j] = nullptr;
+				}
 			}
 			delete[] s[i];
 			s[i] = nullptr;
+			if (i < 7) 
+			{
+				delete[] p[i];
+				p[i] = nullptr;
+			}
 		}
 		delete[] s;
 		s = nullptr;
+		delete[] p;
+		p = nullptr;
 	}
 	
 	if (computeTime)
@@ -602,7 +618,7 @@ double strassenParallelProduct(int** a, int** b, int**& c, int n
 				c[i][j] = 0;
 				for (int k = 0; k < n; ++k)
 				{
-					c[i][j] += a[i][k] * b[k][j];
+					c[i][j] += a[i + xa][k + ya] * b[k + xb][j + yb];
 				}
 			}
 		}
@@ -610,12 +626,16 @@ double strassenParallelProduct(int** a, int** b, int**& c, int n
 	else
 	{
 		int dividedSize = n / 2;
-		int*** s = new int** [10];
+		int ***s = new int** [10], ***p = new int** [7];
 		for (int i = 0; i < 10; ++i)
 		{
+			if (i < 7)
+				p[i] = new int* [dividedSize];
 			s[i] = new int* [dividedSize];
 			for (int j = 0; j < dividedSize; ++j)
 			{
+				if (i < 7)
+					p[i][j] = new int[dividedSize];
 				s[i][j] = new int[dividedSize];
 			}
 		}
@@ -662,42 +682,42 @@ double strassenParallelProduct(int** a, int** b, int**& c, int n
 #			pragma omp sections
 			{
 #				pragma omp section
-					strassenParallelProduct(a, s[0], s[0], dividedSize, xa, ya, 0, 0);
+					strassenParallelProduct(a, s[0], p[0], dividedSize, xa, ya, 0, 0);
 #				pragma omp section
-					strassenParallelProduct(s[1], b, s[1], dividedSize, 0, 0, xb + dividedSize, yb + dividedSize);
+					strassenParallelProduct(s[1], b, p[1], dividedSize, 0, 0, xb + dividedSize, yb + dividedSize);
 #				pragma omp section
-					strassenParallelProduct(s[2], b, s[2], dividedSize, 0, 0, xb, yb);
+					strassenParallelProduct(s[2], b, p[2], dividedSize, 0, 0, xb, yb);
 #				pragma omp section
-					strassenParallelProduct(a, s[3], s[3], dividedSize, xa + dividedSize, ya + dividedSize, 0, 0);
+					strassenParallelProduct(a, s[3], p[3], dividedSize, xa + dividedSize, ya + dividedSize, 0, 0);
 #				pragma omp section
-					strassenParallelProduct(s[4], s[5], s[4], dividedSize);
+					strassenParallelProduct(s[4], s[5], p[4], dividedSize);
 #				pragma omp section
-					strassenParallelProduct(s[6], s[7], s[5], dividedSize);
+					strassenParallelProduct(s[6], s[7], p[5], dividedSize);
 #				pragma omp section
-					strassenParallelProduct(s[8], s[9], s[6], dividedSize);
+					strassenParallelProduct(s[8], s[9], p[6], dividedSize);
 			}
 
 #			pragma omp sections
 			{
 #				pragma omp section
 				{
-					parallelSquareMatrixAddition(s[4], s[3], c, dividedSize, 0, 0, 0, 0, 0, 0);
-					parallelSquareMatrixSubtraction(c, s[1], c, dividedSize, 0, 0, 0, 0, 0, 0);
-					parallelSquareMatrixAddition(c, s[5], c, dividedSize, 0, 0, 0, 0, 0, 0);
+					parallelSquareMatrixAddition(p[4], p[3], c, dividedSize, 0, 0, 0, 0, 0, 0);
+					parallelSquareMatrixSubtraction(c, p[1], c, dividedSize, 0, 0, 0, 0, 0, 0);
+					parallelSquareMatrixAddition(c, p[5], c, dividedSize, 0, 0, 0, 0, 0, 0);
 				}
 
 #				pragma omp section
-					parallelSquareMatrixAddition(s[0], s[1], c, dividedSize, 0, 0, 0, 0, 0, dividedSize);
+					parallelSquareMatrixAddition(p[0], p[1], c, dividedSize, 0, 0, 0, 0, 0, dividedSize);
 
 #				pragma omp section
-					parallelSquareMatrixAddition(s[2], s[3], c, dividedSize, 0, 0, 0, 0, dividedSize, 0);
+					parallelSquareMatrixAddition(p[2], p[3], c, dividedSize, 0, 0, 0, 0, dividedSize, 0);
 
 #				pragma omp section
 				{
-					parallelSquareMatrixAddition(s[4], s[0], c, dividedSize, 0, 0, 0, 0, dividedSize, dividedSize);
-					parallelSquareMatrixSubtraction(c, s[2], c, dividedSize
+					parallelSquareMatrixAddition(p[4], p[0], c, dividedSize, 0, 0, 0, 0, dividedSize, dividedSize);
+					parallelSquareMatrixSubtraction(c, p[2], c, dividedSize
 						, dividedSize, dividedSize, 0, 0, dividedSize, dividedSize);
-					parallelSquareMatrixSubtraction(c, s[6], c, dividedSize
+					parallelSquareMatrixSubtraction(c, p[6], c, dividedSize
 						, dividedSize, dividedSize, 0, 0, dividedSize, dividedSize);
 				}
 			}
@@ -709,12 +729,24 @@ double strassenParallelProduct(int** a, int** b, int**& c, int n
 			{
 				delete[] s[i][j];
 				s[i][j] = nullptr;
+				if (i < 7)
+				{
+					delete[] p[i][j];
+					p[i][j] = nullptr;
+				}
 			}
 			delete[] s[i];
 			s[i] = nullptr;
+			if (i < 7) 
+			{
+				delete[] p[i];
+				p[i] = nullptr;
+			}
 		}
 		delete[] s;
 		s = nullptr;
+		delete[] p;
+		p = nullptr;
 	}
 
 	if (computeTime)
