@@ -8,12 +8,12 @@
 
 using namespace std;
 
-#define USE_CUDA false // if true uses cuda else serial implementation is used
+#define USE_CUDA true // if true uses cuda else serial implementation is used
 //#define DEBUG // if defined the matrices are printed after the calculation.
 
 constexpr int RUN_COUNT = 1; // number of runs
-constexpr int MULT_BLOCK_SIZE = 16; // same as Block width/height
-constexpr int AD_HOC = 64;
+constexpr int MULT_BLOCK_SIZE = 32; // same as Block width/height
+constexpr int AD_HOC = 64; // if matrix size is lower than this the naive algorithm is run
 const char path[300] = "test4096"; // input file path
 
 int N; // size of matrices => A(N x N) . B(N x N) = C(N x N)
@@ -25,7 +25,8 @@ void printMatrices(int* a, int* b, int* c);
 // computes dot product of A and B and stores the result in C
 cudaError_t cudaStrassen(int* h_A, int* h_B, int* h_C);
 cudaError_t cudaStrassen(int* d_A, int* d_B, int* d_C, int n
-    , int xa, int ya, int xb, int yb);
+    , int xa, int ya, int xb, int yb); // get's matrices A B and C which are in the device and are of size n * n.
+    // tis function computes d_a * d_b assuming these matrices start from indexes xa, ya, xb, yb and stores the result in d_c
 
 // this method computed a.b and stores it in c. n is the size of matrices, xa and ya are respectively
 //   the index of the first row and first column of matrix a. xb and yb are similar to xa and ya.
@@ -44,7 +45,7 @@ cudaError_t cudaAllocate(int*& device_mem, int n);
 cudaError_t cudaCopyHtD(int*& device_mem, int*& host_mem, int n);
 
 __global__ void cudaMultKernel(int* d_a, int* d_b, int* d_c, int n
-    , int xa, int ya, int xb, int yb, int xc, int yc)
+    , int xa, int ya, int xb, int yb)
 {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int column = blockIdx.x * blockDim.x + threadIdx.x;
@@ -56,7 +57,7 @@ __global__ void cudaMultKernel(int* d_a, int* d_b, int* d_c, int n
         // each thread computes one element of the result matrix
         for (int i = 0; i < n; ++i)
             tempSum += d_a[(row + xa) * n + (i + ya)] * d_b[(i + xb) * n + (column + yb)];
-        d_c[(row + xc) * n + (column + yc)] = tempSum;
+        d_c[row * n + column] = tempSum;
     }
 }
 
@@ -110,7 +111,7 @@ int main()
 
     printf("N = %d\n", N);
     #if USE_CUDA == true
-        printf("using CUDA ");
+        printf("using CUDA...\n");
     #else
         printf("Sequential Algorithm...\n");
     #endif
@@ -237,23 +238,6 @@ void printMatrices(int* a, int* b, int* c)
     printf("\n#### Done ####\n\n");
 }
 
-void sequentialMult(const int* a, const int* b, int* c)
-{
-    auto start = omp_get_wtime();
-    for (int i = 0; i < N; ++i)
-    {
-        for (int j = 0; j < N; ++j)
-        {
-            c[i * N + j] = 0;
-            for (int t = 0; t < N; ++t)
-            {
-                c[i * N + j] += a[i * N + t] * b[t * N + j];
-            }
-        }
-    }
-    elapsed_t += omp_get_wtime() - start;
-}
-
 cudaError_t cudaStrassen(int* d_A, int* d_B, int* d_C, int n
     , int xa, int ya, int xb, int yb)
 {
@@ -264,7 +248,7 @@ cudaError_t cudaStrassen(int* d_A, int* d_B, int* d_C, int n
     if (n <= AD_HOC)
     {
         dim3 blocksPerGrid(ceil((double)n / (double)threadsPerBlock.x), ceil((double)n / (double)threadsPerBlock.y));
-        cudaMultKernel<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, n, xa, ya, xb, yb, 0, 0);
+        cudaMultKernel<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, n, xa, ya, xb, yb);
     }
     else
     {
@@ -281,6 +265,7 @@ cudaError_t cudaStrassen(int* d_A, int* d_B, int* d_C, int n
         {
             cudaAllocate(p[i], dividedSize * dividedSize);
         }
+        
 
         cudaSubKernel<<<blocksPerGrid, threadsPerBlock>>>(d_B, d_B, s[0], dividedSize, xb, yb + dividedSize
             , xb + dividedSize, yb + dividedSize, 0, 0);
@@ -465,94 +450,110 @@ void strassenSequentialProduct(int** a, int** b, int**& c, int n
     {
         // naive algorithm
         for (int i = 0; i < n; ++i)
-        {
-            for (int j = 0; j < n; ++j)
-            {
-                c[i][j] = 0;
-                for (int k = 0; k < n; ++k)
-                {
-                    c[i][j] += a[i + xa][k + ya] * b[k + xb][j + yb];
-                }
-            }
-        }
+		{
+			for (int j = 0; j < n; ++j)
+			{
+				c[i][j] = 0;
+				for (int k = 0; k < n; ++k)
+				{
+					c[i][j] += a[i + xa][k + ya] * b[k + xb][j + yb];
+				}
+			}
+		}
     }
     else
     {
         // strassen algorithm
         int dividedSize = n / 2;
-        int*** s = new int** [10];
-        for (int i = 0; i < 10; ++i)
-        {
-            s[i] = new int* [dividedSize];
-            for (int j = 0; j < dividedSize; ++j)
-            {
-                s[i][j] = new int[dividedSize];
-            }
-        }
+		int ***s = new int** [10], ***p = new int** [7];
+		for (int i = 0; i < 10; ++i)
+		{
+			if (i < 7)
+				p[i] = new int* [dividedSize];
+			s[i] = new int* [dividedSize];
+			for (int j = 0; j < dividedSize; ++j)
+			{
+				if (i < 7)
+					p[i][j] = new int[dividedSize];
+				s[i][j] = new int[dividedSize];
+			}
+		}
 
-        sequentialSquareMatrixSubtraction(b, b, s[0], dividedSize, xb, yb + dividedSize
-            , xb + dividedSize, yb + dividedSize);
+		sequentialSquareMatrixSubtraction(b, b, s[0], dividedSize, xb, yb + dividedSize
+			, xb + dividedSize, yb + dividedSize);
 
-        sequentialSquareMatrixAddition(a, a, s[1], dividedSize, xa, ya, xa, ya + dividedSize);
+		sequentialSquareMatrixAddition(a, a, s[1], dividedSize, xa, ya, xa, ya + dividedSize);
 
-        sequentialSquareMatrixAddition(a, a, s[2], dividedSize, xa + dividedSize, ya
-            , xa + dividedSize, ya + dividedSize);
+		sequentialSquareMatrixAddition(a, a, s[2], dividedSize, xa + dividedSize, ya
+			, xa + dividedSize, ya + dividedSize);
 
-        sequentialSquareMatrixSubtraction(b, b, s[3], dividedSize, xb + dividedSize, yb, xb, yb);
+		sequentialSquareMatrixSubtraction(b, b, s[3], dividedSize, xb + dividedSize, yb, xb, yb);
 
-        sequentialSquareMatrixAddition(a, a, s[4], dividedSize, xa, ya, xa + dividedSize, ya + dividedSize);
+		sequentialSquareMatrixAddition(a, a, s[4], dividedSize, xa, ya, xa + dividedSize, ya + dividedSize);
 
-        sequentialSquareMatrixAddition(b, b, s[5], dividedSize, xb, yb, xb + dividedSize, yb + dividedSize);
+		sequentialSquareMatrixAddition(b, b, s[5], dividedSize, xb, yb, xb + dividedSize, yb + dividedSize);
 
-        sequentialSquareMatrixSubtraction(a, a, s[6], dividedSize, xa, ya + dividedSize
-            , xa + dividedSize, ya + dividedSize);
+		sequentialSquareMatrixSubtraction(a, a, s[6], dividedSize, xa, ya + dividedSize
+			, xa + dividedSize, ya + dividedSize);
 
-        sequentialSquareMatrixAddition(b, b, s[7], dividedSize, xb + dividedSize, yb
-            , xb + dividedSize, yb + dividedSize);
+		sequentialSquareMatrixAddition(b, b, s[7], dividedSize, xb + dividedSize, yb
+			, xb + dividedSize, yb + dividedSize);
 
-        sequentialSquareMatrixSubtraction(a, a, s[8], dividedSize, xa, ya, xa + dividedSize, ya);
+		sequentialSquareMatrixSubtraction(a, a, s[8], dividedSize, xa, ya, xa + dividedSize, ya);
 
-        sequentialSquareMatrixAddition(b, b, s[9], dividedSize, xb, yb, xb, yb + dividedSize);
+		sequentialSquareMatrixAddition(b, b, s[9], dividedSize, xb, yb, xb, yb + dividedSize);
 
-        // recursive calls(computing P matrices)
-        strassenSequentialProduct(a, s[0], s[0], dividedSize, xa, ya, 0, 0);
-        strassenSequentialProduct(s[1], b, s[1], dividedSize, 0, 0, xb + dividedSize, yb + dividedSize);
-        strassenSequentialProduct(s[2], b, s[2], dividedSize, 0, 0, xb, yb);
-        strassenSequentialProduct(a, s[3], s[3], dividedSize, xa + dividedSize, ya + dividedSize, 0, 0);
-        strassenSequentialProduct(s[4], s[5], s[4], dividedSize);
-        strassenSequentialProduct(s[6], s[7], s[5], dividedSize);
-        strassenSequentialProduct(s[8], s[9], s[6], dividedSize);
+		// recursive calls(computing P matrices)
+		strassenSequentialProduct(a, s[0], p[0], dividedSize, xa, ya, 0, 0);
+		strassenSequentialProduct(s[1], b, p[1], dividedSize, 0, 0, xb + dividedSize, yb + dividedSize);
+		strassenSequentialProduct(s[2], b, p[2], dividedSize, 0, 0, xb, yb);
+		strassenSequentialProduct(a, s[3], p[3], dividedSize, xa + dividedSize, ya + dividedSize, 0, 0);
+		strassenSequentialProduct(s[4], s[5], p[4], dividedSize);
+		strassenSequentialProduct(s[6], s[7], p[5], dividedSize);
+		strassenSequentialProduct(s[8], s[9], p[6], dividedSize);
 
-        // computing C11
-        sequentialSquareMatrixAddition(s[4], s[3], c, dividedSize, 0, 0, 0, 0, 0, 0);
-        sequentialSquareMatrixSubtraction(c, s[1], c, dividedSize, 0, 0, 0, 0, 0, 0);
-        sequentialSquareMatrixAddition(c, s[5], c, dividedSize, 0, 0, 0, 0, 0, 0);
+		// computing C11
+		sequentialSquareMatrixAddition(p[4], p[3], c, dividedSize, 0, 0, 0, 0, 0, 0);
+		sequentialSquareMatrixSubtraction(c, p[1], c, dividedSize, 0, 0, 0, 0, 0, 0);
+		sequentialSquareMatrixAddition(c, p[5], c, dividedSize, 0, 0, 0, 0, 0, 0);
 
-        // computing C12
-        sequentialSquareMatrixAddition(s[0], s[1], c, dividedSize, 0, 0, 0, 0, 0, dividedSize);
+		// computing C12
+		sequentialSquareMatrixAddition(p[0], p[1], c, dividedSize, 0, 0, 0, 0, 0, dividedSize);
 
-        // computing C21
-        sequentialSquareMatrixAddition(s[2], s[3], c, dividedSize, 0, 0, 0, 0, dividedSize, 0);
+		// computing C21
+		sequentialSquareMatrixAddition(p[2], p[3], c, dividedSize, 0, 0, 0, 0, dividedSize, 0);
 
-        // computing C22
-        sequentialSquareMatrixAddition(s[4], s[0], c, dividedSize, 0, 0, 0, 0, dividedSize, dividedSize);
-        sequentialSquareMatrixSubtraction(c, s[2], c, dividedSize
-            , dividedSize, dividedSize, 0, 0, dividedSize, dividedSize);
-        sequentialSquareMatrixSubtraction(c, s[6], c, dividedSize
-            , dividedSize, dividedSize, 0, 0, dividedSize, dividedSize);
+		// computing C22
+		sequentialSquareMatrixAddition(p[4], p[0], c, dividedSize, 0, 0, 0, 0, dividedSize, dividedSize);
+		sequentialSquareMatrixSubtraction(c, p[2], c, dividedSize
+			, dividedSize, dividedSize, 0, 0, dividedSize, dividedSize);
+		sequentialSquareMatrixSubtraction(c, p[6], c, dividedSize
+			, dividedSize, dividedSize, 0, 0, dividedSize, dividedSize);
 
-        for (int i = 0; i < 10; ++i)
-        {
-            for (int j = 0; j < dividedSize; ++j)
-            {
-                delete[] s[i][j];
-                s[i][j] = nullptr;
-            }
-            delete[] s[i];
-            s[i] = nullptr;
-        }
-        delete[] s;
-        s = nullptr;
+		for (int i = 0; i < 10; ++i)
+		{
+			for (int j = 0; j < dividedSize; ++j)
+			{
+				delete[] s[i][j];
+				s[i][j] = nullptr;
+				if (i < 7)
+				{
+					delete[] p[i][j];
+					p[i][j] = nullptr;
+				}
+			}
+			delete[] s[i];
+			s[i] = nullptr;
+			if (i < 7) 
+			{
+				delete[] p[i];
+				p[i] = nullptr;
+			}
+		}
+		delete[] s;
+		s = nullptr;
+		delete[] p;
+		p = nullptr;
     }
 
     if (computeTime)
